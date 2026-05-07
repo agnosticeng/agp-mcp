@@ -12,7 +12,7 @@ A high-performance **Model Context Protocol (MCP)** server for **ClickHouse**, w
 - ⚡ **Read-Only Queries**: Execute SQL queries via a secure AGP API proxy.
 - 🌐 **Dual Transport**: Supports both **stdio** (standard for CLI usage) and **HTTP/SSE** (standard for web-based clients).
 - 🔓 **CORS Support**: Permissive CORS policy for the HTTP transport to enable integration with various web-based MCP clients.
-- 🦀 **Rust-Powered**: Built with the latest Rust 2024 edition for safety and speed.
+- 🛠️ **Idiomatic Rust**: Built with the latest Rust 2024 edition, featuring structured error handling and comprehensive documentation.
 - 🛡️ **Secure**: Designed for read-only access to protect your data integrity.
 
 ## 🚀 Getting Started

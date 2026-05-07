@@ -1,3 +1,8 @@
+//! MCP service implementation for ClickHouse.
+//!
+//! This module defines the `AGPService`, which implements the Model Context Protocol (MCP)
+//! to provide access to ClickHouse databases via the AGP API.
+
 use crate::utils::clickhouse::ClickHouseClient;
 use rmcp::service::RequestContext;
 use rmcp::task_handler;
@@ -9,19 +14,29 @@ use rmcp::{
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+/// Request parameters for the `execute_query` tool.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ExecuteQueryRequest {
+    /// The read-only SQL query to execute.
     pub query: String,
 }
 
+/// The ClickHouse MCP service.
+///
+/// This service provides tools for retrieving database schemas and executing
+/// read-only SQL queries. It manages a `ClickHouseClient` and an `OperationProcessor`
+/// for task management.
 #[derive(Clone)]
 pub struct AGPService {
+    /// The ClickHouse client used to communicate with the proxy.
     client: Arc<ClickHouseClient>,
+    /// The processor used by the `task_handler` for managing long-running operations.
     processor: Arc<Mutex<OperationProcessor>>,
 }
 
 #[tool_router]
 impl AGPService {
+    /// Creates a new `AGPService` with the given ClickHouse client.
     pub fn new(client: ClickHouseClient) -> Self {
         Self {
             client: Arc::new(client),
@@ -29,6 +44,10 @@ impl AGPService {
         }
     }
 
+    /// Retrieves the Clickhouse database schema from the AGP API.
+    ///
+    /// This tool queries `system.tables` to get the names and creation queries
+    /// for all tables in the current database.
     #[tool(description = "Retrieves the Clickhouse database schema from the AGP API.")]
     async fn get_schema(&self) -> Result<CallToolResult, McpError> {
         match self
@@ -37,10 +56,14 @@ impl AGPService {
             .await
         {
             Ok(resp) => Ok(CallToolResult::success(vec![Content::json(resp)?])),
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!("ClickHouseError: {}", e))])),
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(e.to_string())])),
         }
     }
 
+    /// Executes a read-only Clickhouse query via the AGP API.
+    ///
+    /// This tool allows executing arbitrary SQL queries. Note that the proxy
+    /// should be configured to only allow read-only operations.
     #[tool(description = "Executes a read-only Clickhouse query via the AGP API.")]
     async fn execute_query(
         &self,
@@ -48,10 +71,7 @@ impl AGPService {
     ) -> Result<CallToolResult, McpError> {
         match self.client.exec(&query).await {
             Ok(resp) => Ok(CallToolResult::success(vec![Content::json(resp)?])),
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
-                "ClickHouseError: {}",
-                e
-            ))])),
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(e.to_string())])),
         }
     }
 }
@@ -153,7 +173,7 @@ mod tests {
         assert_eq!(result.is_error, Some(true));
         let text = get_text_content(&result);
         assert!(
-            text.contains("ClickHouseError: DB Error"),
+            text.contains("ClickHouse error: DB Error"),
             "Result was: {}",
             text
         );
@@ -222,7 +242,7 @@ mod tests {
         assert_eq!(result.is_error, Some(true));
         let text = get_text_content(&result);
         assert!(
-            text.contains("ClickHouseError: Query Error"),
+            text.contains("ClickHouse error: Query Error"),
             "Result was: {}",
             text
         );
@@ -273,5 +293,4 @@ mod tests {
         assert_eq!(result.is_error, Some(false));
         assert!(!result.content.is_empty());
     }
-
 }

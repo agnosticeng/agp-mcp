@@ -1,3 +1,8 @@
+//! `agp-mcp` is a Model Context Protocol (MCP) server for ClickHouse.
+//!
+//! This crate provides a dual-transport server (stdio and HTTP) that allows
+//! AI models to interact with ClickHouse databases via a secure proxy.
+
 use std::env;
 
 use clap::Parser;
@@ -15,12 +20,15 @@ mod utils;
 use crate::service::agp::AGPService;
 use crate::utils::clickhouse::ClickHouseClient;
 
+/// CLI arguments for the `agp-mcp` server.
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
+    /// The URL of the ClickHouse AGP proxy.
     #[arg(long, env = "PROXY_URL")]
     url: String,
 
+    /// Whether to run in HTTP transport mode (default is stdio).
     #[arg(long)]
     http: bool,
 }

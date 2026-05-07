@@ -1,39 +1,86 @@
-use anyhow::{Context, Result, anyhow};
+//! ClickHouse client and response types.
+//!
+//! This module provides a high-level client for interacting with a ClickHouse proxy API,
+//! handling JSON responses, and providing structured error information.
+
+use anyhow::Result;
 use reqwest::header::{ACCEPT, CONTENT_TYPE, HeaderMap, HeaderValue};
 use reqwest::{Client, Url};
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
+/// Errors that can occur when interacting with ClickHouse.
+#[derive(Debug, Error)]
+pub enum ClickHouseError {
+    /// An error returned by the ClickHouse server or proxy.
+    #[error("ClickHouse error: {0}")]
+    Server(String),
+
+    /// An error that occurred while sending the request or receiving the response.
+    #[error("Request failed: {0}")]
+    Request(#[from] reqwest::Error),
+
+    /// An error that occurred while parsing the JSON response.
+    #[error("Failed to parse response: {0}")]
+    Parse(#[from] serde_json::Error),
+
+    /// An error that occurred while parsing the URL.
+    #[error("Invalid URL: {0}")]
+    InvalidUrl(#[from] url::ParseError),
+}
+
+/// A column descriptor in a ClickHouse JSON response.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ColumnDescriptor {
+    /// The name of the column.
     pub name: String,
+    /// The ClickHouse type of the column.
     #[serde(rename = "type")]
     pub r#type: String,
 }
 
+/// Statistics about a ClickHouse query execution.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Statistics {
+    /// Total bytes read during the query.
     pub bytes_read: u64,
+    /// Total time elapsed during the query in seconds.
     pub elapsed: f64,
+    /// Total rows read during the query.
     pub rows_read: u64,
 }
 
+/// The standard ClickHouse JSON response format.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ClickHouseResponse {
+    /// Metadata about the result columns.
     pub meta: Vec<ColumnDescriptor>,
+    /// The actual query result data as a list of JSON objects.
     pub data: Vec<serde_json::Value>,
+    /// Total number of rows in the result.
     pub rows: u64,
+    /// Execution statistics.
     pub statistics: Statistics,
 }
 
+/// A client for interacting with ClickHouse via a proxy API.
 #[derive(Debug, Clone)]
 pub struct ClickHouseClient {
+    /// The URL of the ClickHouse proxy.
     proxy_url: Url,
+    /// The underlying HTTP client.
     client: Client,
 }
 
 impl ClickHouseClient {
-    pub fn new(proxy_url: &str, initial_headers: Option<HeaderMap>) -> Result<Self> {
-        let mut url = Url::parse(proxy_url).context("Failed to parse proxy URL")?;
+    /// Creates a new `ClickHouseClient`.
+    ///
+    /// # Arguments
+    ///
+    /// * `proxy_url` - The URL of the ClickHouse proxy.
+    /// * `initial_headers` - Optional headers to include in every request (e.g., authentication).
+    pub fn new(proxy_url: &str, initial_headers: Option<HeaderMap>) -> Result<Self, ClickHouseError> {
+        let mut url = Url::parse(proxy_url)?;
         url.query_pairs_mut().append_pair("default_format", "JSON");
 
         let mut headers = initial_headers.unwrap_or_default();
@@ -43,7 +90,7 @@ impl ClickHouseClient {
         let client = Client::builder()
             .default_headers(headers)
             .build()
-            .context("Failed to build reqwest client")?;
+            .map_err(ClickHouseError::Request)?;
 
         Ok(Self {
             proxy_url: url,
@@ -51,42 +98,40 @@ impl ClickHouseClient {
         })
     }
 
-    pub async fn exec(&self, query: &str) -> Result<ClickHouseResponse> {
+    /// Executes a read-only SQL query.
+    ///
+    /// # Arguments
+    ///
+    /// * `query` - The SQL query to execute.
+    pub async fn exec(&self, query: &str) -> Result<ClickHouseResponse, ClickHouseError> {
         let response = self
             .client
-            .post(self.proxy_url.clone())
+            .post(self.proxy_url.as_str())
             .body(query.to_string())
             .send()
-            .await
-            .context("Failed to send ClickHouse query")?;
+            .await?;
 
         if !response.status().is_success() {
             let err_text = response
                 .text()
                 .await
                 .unwrap_or_else(|_| "Unknown error".to_string());
-            return Err(anyhow!("{}", err_text));
+            return Err(ClickHouseError::Server(err_text));
         }
 
-        let body_bytes = response
-            .bytes()
-            .await
-            .context("Failed to read response bytes")?;
+        let body_bytes = response.bytes().await?;
 
         // In ClickHouse, the response can contain an 'exception' field even if it's JSON.
         // We first try to parse it as a regular response, then check for exception.
-
-        let json_value: serde_json::Value = serde_json::from_slice(&body_bytes)
-            .context("Failed to parse ClickHouse response as JSON")?;
+        let json_value: serde_json::Value = serde_json::from_slice(&body_bytes)?;
 
         if let Some(exception) = json_value.get("exception")
             && let Some(msg) = exception.as_str()
         {
-            return Err(anyhow!("{}", msg));
+            return Err(ClickHouseError::Server(msg.to_string()));
         }
 
-        let result: ClickHouseResponse = serde_json::from_value(json_value)
-            .context("Failed to map JSON to ClickHouseResponse")?;
+        let result: ClickHouseResponse = serde_json::from_value(json_value)?;
 
         Ok(result)
     }
@@ -238,7 +283,7 @@ mod tests {
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
         assert!(
-            err_msg.contains("Failed to parse ClickHouse response as JSON"),
+            err_msg.contains("Failed to parse response"),
             "Error message was: {}",
             err_msg
         );
