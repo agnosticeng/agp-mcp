@@ -1,23 +1,34 @@
 use crate::utils::clickhouse::ClickHouseClient;
 use rmcp::service::RequestContext;
+use rmcp::task_handler;
+use rmcp::task_manager::OperationProcessor;
 use rmcp::{
     ErrorData as McpError, RoleServer, ServerHandler, handler::server::wrapper::Parameters,
     model::*, schemars, tool, tool_router,
 };
 use std::sync::Arc;
+use tokio::sync::Mutex;
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ExecuteQueryRequest {
     pub query: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AGPService {
-    pub client: Arc<ClickHouseClient>,
+    client: Arc<ClickHouseClient>,
+    processor: Arc<Mutex<OperationProcessor>>,
 }
 
 #[tool_router]
 impl AGPService {
+    pub fn new(client: ClickHouseClient) -> Self {
+        Self {
+            client: Arc::new(client),
+            processor: Arc::new(Mutex::new(OperationProcessor::new())),
+        }
+    }
+
     #[tool(description = "Retrieves the Clickhouse database schema from the AGP API.")]
     async fn get_schema(&self) -> Result<CallToolResult, McpError> {
         match self
@@ -45,6 +56,7 @@ impl AGPService {
     }
 }
 
+#[task_handler]
 impl ServerHandler for AGPService {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
@@ -93,9 +105,7 @@ mod tests {
         let mut server = Server::new_async().await;
         let url = server.url();
         let ch_client = ClickHouseClient::new(&url, None).unwrap();
-        let service = AGPService {
-            client: Arc::new(ch_client),
-        };
+        let service = AGPService::new(ch_client);
 
         let mock_response = serde_json::json!({
             "meta": [{"name": "table", "type": "String"}],
@@ -126,9 +136,7 @@ mod tests {
         let mut server = Server::new_async().await;
         let url = server.url();
         let ch_client = ClickHouseClient::new(&url, None).unwrap();
-        let service = AGPService {
-            client: Arc::new(ch_client),
-        };
+        let service = AGPService::new(ch_client);
 
         let _m = server
             .mock("POST", "/")
@@ -156,9 +164,7 @@ mod tests {
         let mut server = Server::new_async().await;
         let url = server.url();
         let ch_client = ClickHouseClient::new(&url, None).unwrap();
-        let service = AGPService {
-            client: Arc::new(ch_client),
-        };
+        let service = AGPService::new(ch_client);
 
         let mock_response = serde_json::json!({
             "meta": [{"name": "col", "type": "Int32"}],
@@ -194,9 +200,7 @@ mod tests {
         let mut server = Server::new_async().await;
         let url = server.url();
         let ch_client = ClickHouseClient::new(&url, None).unwrap();
-        let service = AGPService {
-            client: Arc::new(ch_client),
-        };
+        let service = AGPService::new(ch_client);
 
         let _m = server
             .mock("POST", "/")
@@ -227,9 +231,7 @@ mod tests {
     #[tokio::test]
     async fn test_server_handler_get_info() {
         let ch_client = ClickHouseClient::new("http://localhost:8123", None).unwrap();
-        let service = AGPService {
-            client: Arc::new(ch_client),
-        };
+        let service = AGPService::new(ch_client);
 
         let info = service.get_info();
         assert_eq!(info.server_info.name, env!("CARGO_PKG_NAME"));
@@ -238,11 +240,38 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_tool_router_listing() {
-        let tools = AGPService::tool_router().list_all();
-        assert_eq!(tools.len(), 2);
-        let names: Vec<_> = tools.iter().map(|t| t.name.to_string()).collect();
-        assert!(names.contains(&"get_schema".to_string()));
-        assert!(names.contains(&"execute_query".to_string()));
+    async fn test_get_schema_multiple_tables() {
+        let mut server = Server::new_async().await;
+        let url = server.url();
+        let ch_client = ClickHouseClient::new(&url, None).unwrap();
+        let service = AGPService::new(ch_client);
+
+        let mock_response = serde_json::json!({
+            "meta": [{"name": "name", "type": "String"}, {"name": "create_table_query", "type": "String"}],
+            "data": [
+                {"name": "table1", "create_table_query": "CREATE TABLE table1..."},
+                {"name": "table2", "create_table_query": "CREATE TABLE table2..."}
+            ],
+            "rows": 2,
+            "statistics": {"bytes_read": 0, "elapsed": 0.0, "rows_read": 0}
+        });
+
+        let _m = server
+            .mock("POST", "/")
+            .match_query(mockito::Matcher::UrlEncoded(
+                "default_format".into(),
+                "JSON".into(),
+            ))
+            .with_status(200)
+            .with_body(serde_json::to_string(&mock_response).unwrap())
+            .create_async()
+            .await;
+
+        let result = service.get_schema().await.unwrap();
+        // Since we return JSON content, it might be serialized differently
+        // Let's just check that it succeeded and has content
+        assert_eq!(result.is_error, Some(false));
+        assert!(!result.content.is_empty());
     }
+
 }

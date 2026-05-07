@@ -1,7 +1,7 @@
 # agp-mcp 🦀
 
 [![Rust](https://img.shields.io/badge/rust-2024-orange.svg)](https://www.rust-lang.org)
-[![MCP](https://img.shields.io/badge/MCP-1.0.0-blue.svg)](https://modelcontextprotocol.io)
+[![MCP](https://img.shields.io/badge/MCP-1.6.0-blue.svg)](https://modelcontextprotocol.io)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 A high-performance **Model Context Protocol (MCP)** server for **ClickHouse**, written in Rust. This server enables AI models (like Claude) to interact with ClickHouse databases securely and efficiently by retrieving schemas and executing read-only SQL queries.
@@ -10,9 +10,10 @@ A high-performance **Model Context Protocol (MCP)** server for **ClickHouse**, w
 
 - 🔍 **Schema Discovery**: Automatically fetch table names and their creation queries.
 - ⚡ **Read-Only Queries**: Execute SQL queries via a secure AGP API proxy.
+- 🌐 **Dual Transport**: Supports both **stdio** (standard for CLI usage) and **HTTP/SSE** (standard for web-based clients).
+- 🔓 **CORS Support**: Permissive CORS policy for the HTTP transport to enable integration with various web-based MCP clients.
 - 🦀 **Rust-Powered**: Built with the latest Rust 2024 edition for safety and speed.
 - 🛡️ **Secure**: Designed for read-only access to protect your data integrity.
-- 📊 **Rich Metadata**: Returns meta-information about columns, rows, and execution statistics.
 
 ## 🚀 Getting Started
 
@@ -31,7 +32,10 @@ cargo build --release
 
 ### Usage
 
-Run the server by providing the URL to your ClickHouse proxy:
+The server supports two transport modes: **stdio** (default) and **HTTP**.
+
+#### STDIO Mode (Default)
+Best for use with local MCP clients like Claude Desktop.
 
 ```bash
 # Using CLI argument
@@ -40,6 +44,20 @@ Run the server by providing the URL to your ClickHouse proxy:
 # Using environment variable
 export PROXY_URL="https://your-clickhouse-proxy.com"
 ./target/release/agp-mcp
+```
+
+#### HTTP Mode
+Best for remote integration or web-based clients.
+
+```bash
+./target/release/agp-mcp --url "https://your-clickhouse-proxy.com" --http
+```
+
+By default, the HTTP server binds to `127.0.0.1:8001`. You can customize this using an environment variable:
+
+```bash
+export HTTP_BIND_ADDRESS="0.0.0.0:8080"
+./target/release/agp-mcp --http
 ```
 
 ## 🛠️ MCP Tools
@@ -54,15 +72,21 @@ Once connected, the following tools are available to the AI:
 | Argument | Environment Variable | Description |
 |----------|----------------------|-------------|
 | `--url`  | `PROXY_URL`          | **Required**. The URL of the ClickHouse AGP proxy. |
+| `--http` | -                    | Enables the HTTP/SSE transport mode. |
+| -        | `HTTP_BIND_ADDRESS`  | The address and port to bind the HTTP server to (Default: `127.0.0.1:8001`). |
 
 ## 🧪 Development
 
 ### Running Tests
 
-We maintain high test coverage to ensure reliability.
+We maintain a robust test suite covering unit tests and end-to-end scenarios.
 
 ```bash
+# Run Rust unit tests
 cargo test
+
+# Run Python E2E tests (requires the binary to be built)
+python3 tests/e2e.py
 ```
 
 ### Linting & Formatting

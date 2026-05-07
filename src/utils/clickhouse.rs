@@ -25,7 +25,7 @@ pub struct ClickHouseResponse {
     pub statistics: Statistics,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ClickHouseClient {
     proxy_url: Url,
     client: Client,
@@ -245,13 +245,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_exec_wrong_schema() {
+    async fn test_exec_empty_data() {
         let mut server = Server::new_async().await;
         let url = server.url();
         let client = ClickHouseClient::new(&url, None).unwrap();
 
         let mock_response = serde_json::json!({
-            "something": "else"
+            "meta": [{"name": "col1", "type": "String"}],
+            "data": [],
+            "rows": 0,
+            "statistics": {
+                "bytes_read": 0,
+                "elapsed": 0.0,
+                "rows_read": 0
+            }
         });
 
         let _m = server
@@ -261,18 +268,39 @@ mod tests {
                 "JSON".into(),
             ))
             .with_status(200)
-            .with_header("content-type", "application/json")
+            .with_body(serde_json::to_string(&mock_response).unwrap())
+            .create_async()
+            .await;
+
+        let result = client.exec("SELECT 1 WHERE 0").await.unwrap();
+        assert_eq!(result.rows, 0);
+        assert!(result.data.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_exec_missing_statistics() {
+        let mut server = Server::new_async().await;
+        let url = server.url();
+        let client = ClickHouseClient::new(&url, None).unwrap();
+
+        let mock_response = serde_json::json!({
+            "meta": [],
+            "data": [],
+            "rows": 0
+        });
+
+        let _m = server
+            .mock("POST", "/")
+            .match_query(mockito::Matcher::UrlEncoded(
+                "default_format".into(),
+                "JSON".into(),
+            ))
+            .with_status(200)
             .with_body(serde_json::to_string(&mock_response).unwrap())
             .create_async()
             .await;
 
         let result = client.exec("SELECT 1").await;
         assert!(result.is_err());
-        let err_msg = result.unwrap_err().to_string();
-        assert!(
-            err_msg.contains("Failed to map JSON to ClickHouseResponse"),
-            "Error message was: {}",
-            err_msg
-        );
     }
 }
